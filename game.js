@@ -1,438 +1,492 @@
-const canvas = document.getElementById('game');
+// Waterbender Arena - beginner friendly canvas game
+// Controls:
+// WASD = move, Mouse = aim, Left Click = Water Whip, Right Click = Water Wave shield, Space = Ice Shard
+
+const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const statusText = document.getElementById('status');
 
-const selector = document.getElementById('classSelector');
-const elementInfo = document.getElementById('elementInfo');
-const healthInfo = document.getElementById('healthInfo');
-const scoreInfo = document.getElementById('scoreInfo');
+// ---------- Input tracking ----------
+const keys = {};
+const mouse = { x: canvas.width / 2, y: canvas.height / 2 };
 
-const ELEMENTS = {
-  water: {
-    color: '#4fb5ff',
-    altColor: '#d5f0ff',
-    primary: 'Water',
-    alternate: 'Ice',
-    speed: 7,
-    radius: 11,
-    damage: 15,
-    altDamage: 24,
-    altSlow: 0.45,
-    background: '#224a84'
-  },
-  fire: {
-    color: '#ff6f42',
-    altColor: '#f8ff7c',
-    primary: 'Fire',
-    alternate: 'Lightning',
-    speed: 8.5,
-    radius: 10,
-    damage: 17,
-    altDamage: 28,
-    chainRange: 95,
-    background: '#81311f'
-  },
-  earth: {
-    color: '#7b5e43',
-    altColor: '#7f7f84',
-    primary: 'Earth',
-    alternate: 'Metal',
-    speed: 6,
-    radius: 14,
-    damage: 24,
-    altDamage: 32,
-    knockback: 4,
-    background: '#4e4228'
-  },
-  air: {
-    color: '#ccf8ff',
-    altColor: '#d8b6ff',
-    primary: 'Air',
-    alternate: 'Storm',
-    speed: 9,
-    radius: 9,
-    damage: 12,
-    altDamage: 20,
-    pierce: true,
-    background: '#364680'
-  }
-};
-
-const gameState = {
-  running: false,
-  player: null,
-  enemies: [],
-  projectiles: [],
-  particles: [],
-  mouse: { x: canvas.width / 2, y: canvas.height / 2, down: false, charge: 0 },
+// ---------- Core game data ----------
+const game = {
+  running: true,
   score: 0,
   spawnTimer: 0,
-  gameTime: 0
+  particles: [],
+  projectiles: [],
+  enemies: [],
+  restartPrompt: false
 };
 
-function createPlayer(element) {
-  return {
-    x: canvas.width / 2,
-    y: canvas.height - 80,
-    radius: 20,
-    hp: 100,
-    maxHp: 100,
-    element,
-    formAlt: false,
-    cooldown: 0
-  };
+const player = {
+  x: canvas.width / 2,
+  y: canvas.height / 2,
+  r: 16,
+  speed: 3.2,
+  hp: 100,
+  maxHp: 100,
+  invuln: 0
+};
+
+// Floating water orb resource system
+const orb = {
+  x: player.x + 34,
+  y: player.y - 26,
+  angle: 0,
+  radius: 12,
+  water: 100,
+  maxWater: 100,
+  regen: 0.22
+};
+
+// ---------- Utility helpers ----------
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function spawnEnemy() {
-  const side = Math.random() < 0.5 ? 0 : canvas.width;
-  const y = 80 + Math.random() * (canvas.height - 200);
-  const vx = side === 0 ? 1.4 + Math.random() * 0.6 : -1.4 - Math.random() * 0.6;
-  gameState.enemies.push({
-    x: side === 0 ? -40 : canvas.width + 40,
-    y,
-    radius: 18,
-    hp: 60 + Math.random() * 20,
-    speed: Math.abs(vx),
-    vx,
-    fireCooldown: 55 + Math.random() * 40,
-    slow: 0,
-    tint: ['#ff89ad', '#ffbc73', '#9ef6a0'][Math.floor(Math.random() * 3)]
-  });
+function distance(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
 }
 
-function shootProjectile(from, toX, toY, owner = 'player') {
-  const player = gameState.player;
-  const cfg = ELEMENTS[player.element];
-  const dx = toX - from.x;
-  const dy = toY - from.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const speed = cfg.speed + Math.min(gameState.mouse.charge, 50) * 0.12;
-
-  gameState.projectiles.push({
-    x: from.x,
-    y: from.y,
-    vx: (dx / dist) * speed,
-    vy: (dy / dist) * speed,
-    radius: cfg.radius + gameState.mouse.charge * 0.06,
-    life: 120,
-    owner,
-    element: player.element,
-    alt: player.formAlt,
-    damage: player.formAlt ? cfg.altDamage : cfg.damage,
-    color: player.formAlt ? cfg.altColor : cfg.color
-  });
-}
-
-function enemyShoot(enemy) {
-  const p = gameState.player;
-  const dx = p.x - enemy.x;
-  const dy = p.y - enemy.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const speed = 4.1;
-  gameState.projectiles.push({
-    x: enemy.x,
-    y: enemy.y,
-    vx: (dx / dist) * speed,
-    vy: (dy / dist) * speed,
-    radius: 7,
-    life: 180,
-    owner: 'enemy',
-    element: 'enemy',
-    alt: false,
-    damage: 8,
-    color: '#ff7ea6'
-  });
-}
-
-function addParticles(x, y, color, count = 7) {
+function spawnParticles(x, y, color, count, speed = 2.5) {
   for (let i = 0; i < count; i += 1) {
-    gameState.particles.push({
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * speed;
+    game.particles.push({
       x,
       y,
-      vx: (Math.random() - 0.5) * 4,
-      vy: (Math.random() - 0.5) * 4,
-      life: 28 + Math.random() * 14,
-      color,
-      size: 2 + Math.random() * 3
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s,
+      life: 20 + Math.random() * 15,
+      size: 2 + Math.random() * 2,
+      color
     });
   }
 }
 
-function updatePlayer() {
-  const p = gameState.player;
-  p.cooldown = Math.max(0, p.cooldown - 1);
-  if (gameState.mouse.down) {
-    gameState.mouse.charge = Math.min(75, gameState.mouse.charge + 1.15);
+function spawnEnemy() {
+  // Spawn from a random edge and chase player
+  const edge = Math.floor(Math.random() * 4);
+  let x = 0;
+  let y = 0;
+
+  if (edge === 0) { x = -30; y = Math.random() * canvas.height; }
+  if (edge === 1) { x = canvas.width + 30; y = Math.random() * canvas.height; }
+  if (edge === 2) { x = Math.random() * canvas.width; y = -30; }
+  if (edge === 3) { x = Math.random() * canvas.width; y = canvas.height + 30; }
+
+  game.enemies.push({
+    x,
+    y,
+    r: 14,
+    speed: 1.1 + Math.random() * 0.6,
+    hp: 35,
+    freezeTimer: 0,
+    hitCooldown: 0
+  });
+}
+
+// ---------- Abilities ----------
+function castWaterWhip() {
+  // Water Whip = fast projectile
+  const cost = 8;
+  if (!game.running || orb.water < cost) return;
+  orb.water -= cost;
+
+  const dx = mouse.x - player.x;
+  const dy = mouse.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+
+  game.projectiles.push({
+    type: 'whip',
+    x: orb.x,
+    y: orb.y,
+    vx: (dx / len) * 8.5,
+    vy: (dy / len) * 8.5,
+    r: 6,
+    damage: 15,
+    life: 70,
+    color: '#7ed5ff'
+  });
+
+  spawnParticles(orb.x, orb.y, '#7ed5ff', 10, 3.2);
+}
+
+function castWaterWave() {
+  // Water Wave = short range push + damage ring around player
+  const cost = 20;
+  if (!game.running || orb.water < cost) return;
+  orb.water -= cost;
+
+  const waveRadius = 84;
+  for (const e of game.enemies) {
+    const d = distance(player.x, player.y, e.x, e.y);
+    if (d < waveRadius + e.r) {
+      // Push enemy away from player
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const len = Math.hypot(dx, dy) || 1;
+      e.x += (dx / len) * 26;
+      e.y += (dy / len) * 26;
+      e.hp -= 10;
+      spawnParticles(e.x, e.y, '#8fe8ff', 8, 2.2);
+    }
   }
+
+  spawnParticles(player.x, player.y, '#64ccff', 45, 4.5);
+}
+
+function castIceShard() {
+  // Ice Shard = projectile that freezes enemies for 2 seconds
+  const cost = 26;
+  if (!game.running || orb.water < cost) return;
+  orb.water -= cost;
+
+  const dx = mouse.x - player.x;
+  const dy = mouse.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+
+  game.projectiles.push({
+    type: 'ice',
+    x: orb.x,
+    y: orb.y,
+    vx: (dx / len) * 6.8,
+    vy: (dy / len) * 6.8,
+    r: 9,
+    damage: 8,
+    life: 90,
+    color: '#c9f4ff'
+  });
+
+  spawnParticles(orb.x, orb.y, '#dff7ff', 14, 2.8);
+}
+
+function restartGame() {
+  player.x = canvas.width / 2;
+  player.y = canvas.height / 2;
+  player.hp = player.maxHp;
+  player.invuln = 0;
+  orb.water = orb.maxWater;
+  game.score = 0;
+  game.spawnTimer = 35;
+  game.enemies = [];
+  game.projectiles = [];
+  game.particles = [];
+  game.running = true;
+  game.restartPrompt = false;
+}
+
+// ---------- Update systems ----------
+function updatePlayer() {
+  let dx = 0;
+  let dy = 0;
+
+  if (keys.w) dy -= 1;
+  if (keys.s) dy += 1;
+  if (keys.a) dx -= 1;
+  if (keys.d) dx += 1;
+
+  // Normalize diagonal movement
+  const length = Math.hypot(dx, dy) || 1;
+  player.x += (dx / length) * player.speed * (dx || dy ? 1 : 0);
+  player.y += (dy / length) * player.speed * (dx || dy ? 1 : 0);
+
+  // Keep player inside arena
+  player.x = clamp(player.x, player.r, canvas.width - player.r);
+  player.y = clamp(player.y, player.r, canvas.height - player.r);
+
+  player.invuln = Math.max(0, player.invuln - 1);
+}
+
+function updateOrb() {
+  // Orb circles near the player for animation
+  orb.angle += 0.06;
+  orb.x = player.x + Math.cos(orb.angle) * 30;
+  orb.y = player.y - 24 + Math.sin(orb.angle * 1.4) * 7;
+
+  // Water regenerates slowly over time
+  orb.water = clamp(orb.water + orb.regen, 0, orb.maxWater);
 }
 
 function updateEnemies() {
-  const p = gameState.player;
-  for (let i = gameState.enemies.length - 1; i >= 0; i -= 1) {
-    const e = gameState.enemies[i];
-    const slowMultiplier = e.slow > 0 ? 0.4 : 1;
-    e.x += e.vx * slowMultiplier;
+  for (let i = game.enemies.length - 1; i >= 0; i -= 1) {
+    const e = game.enemies[i];
 
-    if (Math.abs(e.x - p.x) < 200) {
-      e.y += Math.sign(p.y - e.y) * 0.8;
+    if (e.freezeTimer > 0) {
+      e.freezeTimer -= 1;
+      spawnParticles(e.x, e.y, 'rgba(207,243,255,0.25)', 1, 0.7);
+    } else {
+      // Chase player
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const len = Math.hypot(dx, dy) || 1;
+      e.x += (dx / len) * e.speed;
+      e.y += (dy / len) * e.speed;
     }
 
-    e.fireCooldown -= 1;
-    if (e.fireCooldown <= 0) {
-      enemyShoot(e);
-      e.fireCooldown = 70 + Math.random() * 50;
+    // Enemy collision damage
+    const d = distance(player.x, player.y, e.x, e.y);
+    e.hitCooldown = Math.max(0, e.hitCooldown - 1);
+    if (d < player.r + e.r && player.invuln <= 0 && e.hitCooldown <= 0) {
+      player.hp -= 10;
+      player.invuln = 25;
+      e.hitCooldown = 25;
+      spawnParticles(player.x, player.y, '#9ad9ff', 15, 3);
     }
-
-    e.slow = Math.max(0, e.slow - 1);
 
     if (e.hp <= 0) {
-      addParticles(e.x, e.y, e.tint, 10);
-      gameState.enemies.splice(i, 1);
-      gameState.score += 10;
+      game.score += 10;
+      spawnParticles(e.x, e.y, '#ff9aa3', 20, 3.2);
+      game.enemies.splice(i, 1);
     }
   }
 }
 
 function updateProjectiles() {
-  const p = gameState.player;
+  for (let i = game.projectiles.length - 1; i >= 0; i -= 1) {
+    const p = game.projectiles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= 1;
 
-  for (let i = gameState.projectiles.length - 1; i >= 0; i -= 1) {
-    const pr = gameState.projectiles[i];
-    pr.x += pr.vx;
-    pr.y += pr.vy;
-    pr.life -= 1;
+    let remove = false;
 
-    let removeProjectile = false;
-
-    if (pr.owner === 'player') {
-      for (const enemy of gameState.enemies) {
-        const d = Math.hypot(pr.x - enemy.x, pr.y - enemy.y);
-        if (d < pr.radius + enemy.radius) {
-          enemy.hp -= pr.damage;
-          addParticles(pr.x, pr.y, pr.color, pr.alt ? 10 : 6);
-
-          if (pr.element === 'water' && pr.alt) {
-            enemy.slow = 90;
-          }
-
-          if (pr.element === 'earth' && pr.alt) {
-            enemy.vx += Math.sign(enemy.x - p.x) * ELEMENTS.earth.knockback;
-          }
-
-          if (pr.element === 'fire' && pr.alt) {
-            for (const nearby of gameState.enemies) {
-              if (nearby === enemy) continue;
-              const nDist = Math.hypot(nearby.x - enemy.x, nearby.y - enemy.y);
-              if (nDist < ELEMENTS.fire.chainRange) {
-                nearby.hp -= Math.round(pr.damage * 0.6);
-                addParticles(nearby.x, nearby.y, '#f6fd95', 6);
-              }
-            }
-          }
-
-          if (!(pr.element === 'air' && pr.alt)) {
-            removeProjectile = true;
-          }
-          break;
+    // Check collisions with enemies
+    for (const e of game.enemies) {
+      const d = distance(p.x, p.y, e.x, e.y);
+      if (d < p.r + e.r) {
+        e.hp -= p.damage;
+        if (p.type === 'ice') {
+          e.freezeTimer = 120; // 2 seconds at ~60 FPS
+          spawnParticles(e.x, e.y, '#dff7ff', 16, 2.4);
+        } else {
+          spawnParticles(e.x, e.y, '#79d4ff', 8, 2.2);
         }
-      }
-    } else {
-      const d = Math.hypot(pr.x - p.x, pr.y - p.y);
-      if (d < pr.radius + p.radius) {
-        p.hp -= pr.damage;
-        addParticles(pr.x, pr.y, '#ff9db8', 8);
-        removeProjectile = true;
+        remove = true;
+        break;
       }
     }
 
     if (
-      removeProjectile ||
-      pr.life <= 0 ||
-      pr.x < -40 ||
-      pr.y < -40 ||
-      pr.x > canvas.width + 40 ||
-      pr.y > canvas.height + 40
+      remove ||
+      p.life <= 0 ||
+      p.x < -20 ||
+      p.y < -20 ||
+      p.x > canvas.width + 20 ||
+      p.y > canvas.height + 20
     ) {
-      gameState.projectiles.splice(i, 1);
+      game.projectiles.splice(i, 1);
     }
   }
 }
 
 function updateParticles() {
-  for (let i = gameState.particles.length - 1; i >= 0; i -= 1) {
-    const pa = gameState.particles[i];
-    pa.x += pa.vx;
-    pa.y += pa.vy;
-    pa.life -= 1;
-    if (pa.life <= 0) {
-      gameState.particles.splice(i, 1);
-    }
+  for (let i = game.particles.length - 1; i >= 0; i -= 1) {
+    const p = game.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= 1;
+    if (p.life <= 0) game.particles.splice(i, 1);
   }
 }
 
-function drawArena() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
+function updateGame() {
+  if (!game.running) return;
 
-  ctx.fillStyle = '#0f1527';
+  updatePlayer();
+  updateOrb();
+  updateEnemies();
+  updateProjectiles();
+  updateParticles();
+
+  // Spawn enemies repeatedly
+  game.spawnTimer -= 1;
+  if (game.spawnTimer <= 0) {
+    spawnEnemy();
+    game.spawnTimer = 45 + Math.random() * 35;
+  }
+
+  // Game over state
+  if (player.hp <= 0) {
+    game.running = false;
+    game.restartPrompt = true;
+  }
+}
+
+// ---------- Drawing ----------
+function drawBackground() {
+  ctx.fillStyle = '#0b1f3f';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = cfg.background;
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 240, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  for (let x = 0; x < canvas.width; x += 55) {
+  // Subtle wave lines
+  ctx.strokeStyle = 'rgba(130,190,255,0.12)';
+  ctx.lineWidth = 1;
+  for (let y = 20; y < canvas.height; y += 30) {
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
+    for (let x = 0; x <= canvas.width; x += 24) {
+      const wave = Math.sin((x + performance.now() * 0.08 + y) * 0.02) * 2;
+      if (x === 0) ctx.moveTo(x, y + wave);
+      else ctx.lineTo(x, y + wave);
+    }
     ctx.stroke();
   }
 }
 
-function drawEntities() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
-
-  ctx.fillStyle = p.formAlt ? cfg.altColor : cfg.color;
+function drawHumanoid(x, y, bodyColor) {
+  // Very simple humanoid shape
+  ctx.fillStyle = bodyColor;
+  // head
   ctx.beginPath();
-  ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+  ctx.arc(x, y - 14, 7, 0, Math.PI * 2);
   ctx.fill();
+  // torso
+  ctx.fillRect(x - 6, y - 8, 12, 18);
+  // arms
+  ctx.fillRect(x - 13, y - 7, 7, 4);
+  ctx.fillRect(x + 6, y - 7, 7, 4);
+  // legs
+  ctx.fillRect(x - 5, y + 10, 4, 11);
+  ctx.fillRect(x + 1, y + 10, 4, 11);
+}
 
-  // aim line + charge preview
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 2;
+function drawUI() {
+  ctx.fillStyle = 'rgba(4,10,20,0.6)';
+  ctx.fillRect(12, 12, 270, 92);
+  ctx.strokeStyle = 'rgba(130,190,255,0.45)';
+  ctx.strokeRect(12, 12, 270, 92);
+
+  ctx.fillStyle = '#eaf6ff';
+  ctx.font = '16px Arial';
+  ctx.fillText(`Health: ${Math.max(0, Math.ceil(player.hp))}/${player.maxHp}`, 20, 36);
+  ctx.fillText(`Water: ${Math.floor(orb.water)}/${orb.maxWater}`, 20, 60);
+  ctx.fillText(`Score: ${game.score}`, 20, 84);
+
+  // Water meter bar
+  const waterRatio = orb.water / orb.maxWater;
+  ctx.fillStyle = '#123455';
+  ctx.fillRect(110, 48, 150, 10);
+  ctx.fillStyle = '#66d0ff';
+  ctx.fillRect(110, 48, 150 * waterRatio, 10);
+}
+
+function drawGame() {
+  drawBackground();
+
+  // Draw enemies first
+  for (const e of game.enemies) {
+    drawHumanoid(e.x, e.y, e.freezeTimer > 0 ? '#ffb6be' : '#ff5c6d');
+
+    // Frozen overlay
+    if (e.freezeTimer > 0) {
+      ctx.fillStyle = 'rgba(200,245,255,0.35)';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r + 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Player (blue humanoid)
+  drawHumanoid(player.x, player.y, player.invuln > 0 ? '#7fd4ff' : '#45b7ff');
+
+  // Orb glow + animated water orb
+  ctx.shadowColor = '#78d8ff';
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = '#74d3ff';
   ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(gameState.mouse.x, gameState.mouse.y);
-  ctx.stroke();
+  ctx.arc(orb.x, orb.y, orb.radius + Math.sin(performance.now() * 0.01) * 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
 
-  if (gameState.mouse.down) {
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillRect(p.x - 35, p.y + 28, (gameState.mouse.charge / 75) * 70, 6);
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.strokeRect(p.x - 35, p.y + 28, 70, 6);
-  }
-
-  for (const enemy of gameState.enemies) {
-    ctx.fillStyle = enemy.tint;
+  // Projectiles
+  for (const p of game.projectiles) {
+    ctx.fillStyle = p.color;
     ctx.beginPath();
-    ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#101825';
-    ctx.fillRect(enemy.x - 20, enemy.y - 26, 40, 5);
-    ctx.fillStyle = '#8af5a0';
-    const hpWidth = Math.max(0, (enemy.hp / 80) * 40);
-    ctx.fillRect(enemy.x - 20, enemy.y - 26, hpWidth, 5);
-  }
-
-  for (const pr of gameState.projectiles) {
-    ctx.fillStyle = pr.color;
-    ctx.beginPath();
-    ctx.arc(pr.x, pr.y, pr.radius, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  for (const pa of gameState.particles) {
-    ctx.fillStyle = pa.color;
-    ctx.globalAlpha = Math.max(0, pa.life / 40);
+  // Particles
+  for (const p of game.particles) {
+    ctx.globalAlpha = clamp(p.life / 35, 0, 1);
+    ctx.fillStyle = p.color;
     ctx.beginPath();
-    ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
+
+  // Aim line
+  ctx.strokeStyle = 'rgba(175,230,255,0.45)';
+  ctx.setLineDash([5, 6]);
+  ctx.beginPath();
+  ctx.moveTo(player.x, player.y);
+  ctx.lineTo(mouse.x, mouse.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  drawUI();
+
+  if (game.restartPrompt) {
+    ctx.fillStyle = 'rgba(0,0,0,0.58)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 56px Arial';
+    ctx.fillText('You Were Defeated', canvas.width / 2, canvas.height / 2 - 35);
+    ctx.font = '24px Arial';
+    ctx.fillText(`Final Score: ${game.score}`, canvas.width / 2, canvas.height / 2 + 8);
+    ctx.fillText('Press R to Restart', canvas.width / 2, canvas.height / 2 + 45);
+    ctx.textAlign = 'left';
+  }
 }
 
-function updateHud() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
-  elementInfo.textContent = `Element: ${cfg.primary} ${p.formAlt ? `(${cfg.alternate} Form)` : ''}`;
-  healthInfo.textContent = `Health: ${Math.max(0, Math.round(p.hp))}/${p.maxHp}`;
-  scoreInfo.textContent = `Score: ${gameState.score}`;
+function loop() {
+  updateGame();
+  drawGame();
+  requestAnimationFrame(loop);
 }
 
-function drawGameOver() {
-  if (gameState.player.hp > 0) return;
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 50px sans-serif';
-  ctx.fillText('Defeated', canvas.width / 2, canvas.height / 2 - 10);
-  ctx.font = '24px sans-serif';
-  ctx.fillText(`Final Score: ${gameState.score}`, canvas.width / 2, canvas.height / 2 + 35);
-}
+// ---------- Events ----------
+window.addEventListener('keydown', (event) => {
+  const key = event.key.toLowerCase();
+  keys[key] = true;
 
-function gameLoop() {
-  if (!gameState.running) return;
-
-  gameState.gameTime += 1;
-  gameState.spawnTimer -= 1;
-
-  if (gameState.spawnTimer <= 0) {
-    spawnEnemy();
-    gameState.spawnTimer = Math.max(25, 95 - Math.floor(gameState.gameTime / 450));
+  if (key === ' ' && game.running) {
+    event.preventDefault();
+    castIceShard();
   }
 
-  if (gameState.player.hp > 0) {
-    updatePlayer();
-    updateEnemies();
-    updateProjectiles();
-    updateParticles();
+  if (key === 'r' && game.restartPrompt) {
+    restartGame();
   }
+});
 
-  drawArena();
-  drawEntities();
-  drawGameOver();
-  updateHud();
-
-  requestAnimationFrame(gameLoop);
-}
+window.addEventListener('keyup', (event) => {
+  keys[event.key.toLowerCase()] = false;
+});
 
 canvas.addEventListener('mousemove', (event) => {
   const rect = canvas.getBoundingClientRect();
-  gameState.mouse.x = event.clientX - rect.left;
-  gameState.mouse.y = event.clientY - rect.top;
+  mouse.x = event.clientX - rect.left;
+  mouse.y = event.clientY - rect.top;
 });
 
 canvas.addEventListener('mousedown', (event) => {
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  if (event.button === 0) {
-    gameState.mouse.down = true;
-  }
-});
-
-canvas.addEventListener('mouseup', (event) => {
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  if (event.button === 0 && gameState.mouse.down) {
-    gameState.mouse.down = false;
-    shootProjectile(gameState.player, gameState.mouse.x, gameState.mouse.y);
-    gameState.mouse.charge = 0;
-  }
+  if (!game.running) return;
+  if (event.button === 0) castWaterWhip();
 });
 
 canvas.addEventListener('contextmenu', (event) => {
+  // Prevent browser menu because right click is an ability
   event.preventDefault();
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  gameState.player.formAlt = !gameState.player.formAlt;
-  addParticles(gameState.player.x, gameState.player.y, '#ffffff', 9);
+  if (game.running) castWaterWave();
 });
 
-for (const button of document.querySelectorAll('button[data-element]')) {
-  button.addEventListener('click', () => {
-    const element = button.dataset.element;
-    gameState.player = createPlayer(element);
-    gameState.running = true;
-    gameState.enemies = [];
-    gameState.projectiles = [];
-    gameState.particles = [];
-    gameState.score = 0;
-    gameState.gameTime = 0;
-    gameState.spawnTimer = 20;
-    selector.style.display = 'none';
-    gameLoop();
-  });
-}
+statusText.textContent = 'Defeat red raiders using waterbending. Keep your orb filled!';
+restartGame();
+loop();
