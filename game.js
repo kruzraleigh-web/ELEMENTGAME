@@ -1,438 +1,445 @@
-const canvas = document.getElementById('game');
+// Waterbender Arena
+// Beginner-friendly single-file game logic for HTML5 Canvas.
+
+const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
 
-const selector = document.getElementById('classSelector');
-const elementInfo = document.getElementById('elementInfo');
-const healthInfo = document.getElementById('healthInfo');
-const scoreInfo = document.getElementById('scoreInfo');
+const keys = {};
+const mouse = { x: canvas.width / 2, y: canvas.height / 2, leftDown: false, rightDown: false };
 
-const ELEMENTS = {
-  water: {
-    color: '#4fb5ff',
-    altColor: '#d5f0ff',
-    primary: 'Water',
-    alternate: 'Ice',
-    speed: 7,
-    radius: 11,
-    damage: 15,
-    altDamage: 24,
-    altSlow: 0.45,
-    background: '#224a84'
-  },
-  fire: {
-    color: '#ff6f42',
-    altColor: '#f8ff7c',
-    primary: 'Fire',
-    alternate: 'Lightning',
-    speed: 8.5,
-    radius: 10,
-    damage: 17,
-    altDamage: 28,
-    chainRange: 95,
-    background: '#81311f'
-  },
-  earth: {
-    color: '#7b5e43',
-    altColor: '#7f7f84',
-    primary: 'Earth',
-    alternate: 'Metal',
-    speed: 6,
-    radius: 14,
-    damage: 24,
-    altDamage: 32,
-    knockback: 4,
-    background: '#4e4228'
-  },
-  air: {
-    color: '#ccf8ff',
-    altColor: '#d8b6ff',
-    primary: 'Air',
-    alternate: 'Storm',
-    speed: 9,
-    radius: 9,
-    damage: 12,
-    altDamage: 20,
-    pierce: true,
-    background: '#364680'
+const state = {
+  running: true,
+  time: 0,
+  score: 0,
+  spawnTimer: 0,
+  particles: [],
+  projectiles: [],
+  enemies: []
+};
+
+const player = {
+  x: canvas.width / 2,
+  y: canvas.height / 2,
+  r: 16,
+  speed: 3.2,
+  hp: 100,
+  maxHp: 100,
+  invuln: 0,
+  waveCooldown: 0,
+  iceCooldown: 0,
+  orb: {
+    x: canvas.width / 2 + 30,
+    y: canvas.height / 2 - 20,
+    amount: 100,
+    max: 100,
+    angle: 0
   }
 };
 
-const gameState = {
-  running: false,
-  player: null,
-  enemies: [],
-  projectiles: [],
-  particles: [],
-  mouse: { x: canvas.width / 2, y: canvas.height / 2, down: false, charge: 0 },
-  score: 0,
-  spawnTimer: 0,
-  gameTime: 0
-};
+function resetGame() {
+  state.running = true;
+  state.time = 0;
+  state.score = 0;
+  state.spawnTimer = 0;
+  state.particles.length = 0;
+  state.projectiles.length = 0;
+  state.enemies.length = 0;
+  player.x = canvas.width / 2;
+  player.y = canvas.height / 2;
+  player.hp = player.maxHp;
+  player.invuln = 0;
+  player.waveCooldown = 0;
+  player.iceCooldown = 0;
+  player.orb.amount = 100;
+}
 
-function createPlayer(element) {
-  return {
-    x: canvas.width / 2,
-    y: canvas.height - 80,
-    radius: 20,
-    hp: 100,
-    maxHp: 100,
-    element,
-    formAlt: false,
-    cooldown: 0
-  };
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function dist(ax, ay, bx, by) {
+  return Math.hypot(ax - bx, ay - by);
 }
 
 function spawnEnemy() {
-  const side = Math.random() < 0.5 ? 0 : canvas.width;
-  const y = 80 + Math.random() * (canvas.height - 200);
-  const vx = side === 0 ? 1.4 + Math.random() * 0.6 : -1.4 - Math.random() * 0.6;
-  gameState.enemies.push({
-    x: side === 0 ? -40 : canvas.width + 40,
+  const side = Math.floor(Math.random() * 4);
+  let x = 0;
+  let y = 0;
+  if (side === 0) { x = -20; y = Math.random() * canvas.height; }
+  if (side === 1) { x = canvas.width + 20; y = Math.random() * canvas.height; }
+  if (side === 2) { x = Math.random() * canvas.width; y = -20; }
+  if (side === 3) { x = Math.random() * canvas.width; y = canvas.height + 20; }
+
+  state.enemies.push({
+    x,
     y,
-    radius: 18,
-    hp: 60 + Math.random() * 20,
-    speed: Math.abs(vx),
-    vx,
-    fireCooldown: 55 + Math.random() * 40,
-    slow: 0,
-    tint: ['#ff89ad', '#ffbc73', '#9ef6a0'][Math.floor(Math.random() * 3)]
+    r: 14,
+    hp: 35,
+    speed: 1 + Math.random() * 0.7,
+    frozen: 0,
+    hitTimer: 0,
+    stepOffset: Math.random() * Math.PI * 2
   });
 }
 
-function shootProjectile(from, toX, toY, owner = 'player') {
-  const player = gameState.player;
-  const cfg = ELEMENTS[player.element];
-  const dx = toX - from.x;
-  const dy = toY - from.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const speed = cfg.speed + Math.min(gameState.mouse.charge, 50) * 0.12;
-
-  gameState.projectiles.push({
-    x: from.x,
-    y: from.y,
-    vx: (dx / dist) * speed,
-    vy: (dy / dist) * speed,
-    radius: cfg.radius + gameState.mouse.charge * 0.06,
-    life: 120,
-    owner,
-    element: player.element,
-    alt: player.formAlt,
-    damage: player.formAlt ? cfg.altDamage : cfg.damage,
-    color: player.formAlt ? cfg.altColor : cfg.color
-  });
-}
-
-function enemyShoot(enemy) {
-  const p = gameState.player;
-  const dx = p.x - enemy.x;
-  const dy = p.y - enemy.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const speed = 4.1;
-  gameState.projectiles.push({
-    x: enemy.x,
-    y: enemy.y,
-    vx: (dx / dist) * speed,
-    vy: (dy / dist) * speed,
-    radius: 7,
-    life: 180,
-    owner: 'enemy',
-    element: 'enemy',
-    alt: false,
-    damage: 8,
-    color: '#ff7ea6'
-  });
-}
-
-function addParticles(x, y, color, count = 7) {
+function emitParticles(x, y, color, count, speed = 2.5) {
   for (let i = 0; i < count; i += 1) {
-    gameState.particles.push({
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * speed;
+    state.particles.push({
       x,
       y,
-      vx: (Math.random() - 0.5) * 4,
-      vy: (Math.random() - 0.5) * 4,
-      life: 28 + Math.random() * 14,
-      color,
-      size: 2 + Math.random() * 3
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s,
+      life: 30 + Math.random() * 20,
+      size: 2 + Math.random() * 3,
+      color
     });
   }
 }
 
+function shootWaterWhip() {
+  if (player.orb.amount < 8 || !state.running) return;
+  player.orb.amount -= 8;
+  const dx = mouse.x - player.x;
+  const dy = mouse.y - player.y;
+  const d = Math.hypot(dx, dy) || 1;
+  state.projectiles.push({
+    x: player.x,
+    y: player.y,
+    vx: (dx / d) * 8.5,
+    vy: (dy / d) * 8.5,
+    r: 6,
+    damage: 16,
+    life: 80,
+    freeze: 0,
+    color: '#7ed7ff'
+  });
+  emitParticles(player.x, player.y, '#7ed7ff', 8);
+}
+
+// Water Wave: short range burst that pushes enemies back.
+function useWaterWave() {
+  if (player.waveCooldown > 0 || player.orb.amount < 20 || !state.running) return;
+  player.orb.amount -= 20;
+  player.waveCooldown = 70;
+
+  for (const enemy of state.enemies) {
+    const d = dist(player.x, player.y, enemy.x, enemy.y);
+    if (d < 90) {
+      const dx = enemy.x - player.x;
+      const dy = enemy.y - player.y;
+      const n = Math.hypot(dx, dy) || 1;
+      enemy.x += (dx / n) * 40;
+      enemy.y += (dy / n) * 40;
+      enemy.hp -= 8;
+      enemy.hitTimer = 6;
+      emitParticles(enemy.x, enemy.y, '#8ce4ff', 6);
+    }
+  }
+
+  emitParticles(player.x, player.y, '#4dc8ff', 30, 4);
+}
+
+// Ice Shard blast: freezes enemies for 2 seconds.
+function useIceBlast() {
+  if (player.iceCooldown > 0 || player.orb.amount < 30 || !state.running) return;
+  player.orb.amount -= 30;
+  player.iceCooldown = 180;
+
+  for (const enemy of state.enemies) {
+    const d = dist(player.x, player.y, enemy.x, enemy.y);
+    if (d < 170) {
+      enemy.frozen = 120; // 2 seconds at 60fps
+      enemy.hp -= 12;
+      enemy.hitTimer = 10;
+      emitParticles(enemy.x, enemy.y, '#d8f3ff', 10);
+    }
+  }
+
+  emitParticles(player.x, player.y, '#b8ebff', 45, 5);
+}
+
 function updatePlayer() {
-  const p = gameState.player;
-  p.cooldown = Math.max(0, p.cooldown - 1);
-  if (gameState.mouse.down) {
-    gameState.mouse.charge = Math.min(75, gameState.mouse.charge + 1.15);
+  let mx = 0;
+  let my = 0;
+  if (keys.KeyW) my -= 1;
+  if (keys.KeyS) my += 1;
+  if (keys.KeyA) mx -= 1;
+  if (keys.KeyD) mx += 1;
+
+  const len = Math.hypot(mx, my) || 1;
+  player.x += (mx / len) * player.speed;
+  player.y += (my / len) * player.speed;
+  player.x = clamp(player.x, 20, canvas.width - 20);
+  player.y = clamp(player.y, 20, canvas.height - 20);
+
+  // Water orb floats around and follows player with slight delay.
+  player.orb.angle += 0.06;
+  const targetOrbX = player.x + Math.cos(player.orb.angle) * 26;
+  const targetOrbY = player.y - 24 + Math.sin(player.orb.angle * 1.7) * 8;
+  player.orb.x += (targetOrbX - player.orb.x) * 0.18;
+  player.orb.y += (targetOrbY - player.orb.y) * 0.18;
+
+  // Water regenerates over time.
+  player.orb.amount = clamp(player.orb.amount + 0.16, 0, player.orb.max);
+  player.invuln = Math.max(0, player.invuln - 1);
+  player.waveCooldown = Math.max(0, player.waveCooldown - 1);
+  player.iceCooldown = Math.max(0, player.iceCooldown - 1);
+}
+
+function updateProjectiles() {
+  for (let i = state.projectiles.length - 1; i >= 0; i -= 1) {
+    const p = state.projectiles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life -= 1;
+
+    let remove = false;
+    for (const enemy of state.enemies) {
+      if (dist(p.x, p.y, enemy.x, enemy.y) < p.r + enemy.r) {
+        enemy.hp -= p.damage;
+        enemy.hitTimer = 5;
+        if (p.freeze > 0) enemy.frozen = p.freeze;
+        emitParticles(p.x, p.y, p.color, 7);
+        remove = true;
+        break;
+      }
+    }
+
+    if (p.life <= 0 || p.x < -20 || p.y < -20 || p.x > canvas.width + 20 || p.y > canvas.height + 20) {
+      remove = true;
+    }
+
+    if (remove) state.projectiles.splice(i, 1);
   }
 }
 
 function updateEnemies() {
-  const p = gameState.player;
-  for (let i = gameState.enemies.length - 1; i >= 0; i -= 1) {
-    const e = gameState.enemies[i];
-    const slowMultiplier = e.slow > 0 ? 0.4 : 1;
-    e.x += e.vx * slowMultiplier;
+  for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
+    const e = state.enemies[i];
+    e.hitTimer = Math.max(0, e.hitTimer - 1);
+    e.frozen = Math.max(0, e.frozen - 1);
 
-    if (Math.abs(e.x - p.x) < 200) {
-      e.y += Math.sign(p.y - e.y) * 0.8;
+    if (e.frozen <= 0) {
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const d = Math.hypot(dx, dy) || 1;
+      e.x += (dx / d) * e.speed;
+      e.y += (dy / d) * e.speed;
     }
 
-    e.fireCooldown -= 1;
-    if (e.fireCooldown <= 0) {
-      enemyShoot(e);
-      e.fireCooldown = 70 + Math.random() * 50;
+    if (dist(player.x, player.y, e.x, e.y) < player.r + e.r + 4 && player.invuln <= 0 && state.running) {
+      player.hp -= 12;
+      player.invuln = 30;
+      emitParticles(player.x, player.y, '#9fe2ff', 15);
+      if (mouse.rightDown && player.orb.amount >= 1) {
+        // Shield reduces damage when held.
+        player.hp += 7;
+      }
+      if (player.hp <= 0) {
+        player.hp = 0;
+        state.running = false;
+      }
     }
-
-    e.slow = Math.max(0, e.slow - 1);
 
     if (e.hp <= 0) {
-      addParticles(e.x, e.y, e.tint, 10);
-      gameState.enemies.splice(i, 1);
-      gameState.score += 10;
-    }
-  }
-}
-
-function updateProjectiles() {
-  const p = gameState.player;
-
-  for (let i = gameState.projectiles.length - 1; i >= 0; i -= 1) {
-    const pr = gameState.projectiles[i];
-    pr.x += pr.vx;
-    pr.y += pr.vy;
-    pr.life -= 1;
-
-    let removeProjectile = false;
-
-    if (pr.owner === 'player') {
-      for (const enemy of gameState.enemies) {
-        const d = Math.hypot(pr.x - enemy.x, pr.y - enemy.y);
-        if (d < pr.radius + enemy.radius) {
-          enemy.hp -= pr.damage;
-          addParticles(pr.x, pr.y, pr.color, pr.alt ? 10 : 6);
-
-          if (pr.element === 'water' && pr.alt) {
-            enemy.slow = 90;
-          }
-
-          if (pr.element === 'earth' && pr.alt) {
-            enemy.vx += Math.sign(enemy.x - p.x) * ELEMENTS.earth.knockback;
-          }
-
-          if (pr.element === 'fire' && pr.alt) {
-            for (const nearby of gameState.enemies) {
-              if (nearby === enemy) continue;
-              const nDist = Math.hypot(nearby.x - enemy.x, nearby.y - enemy.y);
-              if (nDist < ELEMENTS.fire.chainRange) {
-                nearby.hp -= Math.round(pr.damage * 0.6);
-                addParticles(nearby.x, nearby.y, '#f6fd95', 6);
-              }
-            }
-          }
-
-          if (!(pr.element === 'air' && pr.alt)) {
-            removeProjectile = true;
-          }
-          break;
-        }
-      }
-    } else {
-      const d = Math.hypot(pr.x - p.x, pr.y - p.y);
-      if (d < pr.radius + p.radius) {
-        p.hp -= pr.damage;
-        addParticles(pr.x, pr.y, '#ff9db8', 8);
-        removeProjectile = true;
-      }
-    }
-
-    if (
-      removeProjectile ||
-      pr.life <= 0 ||
-      pr.x < -40 ||
-      pr.y < -40 ||
-      pr.x > canvas.width + 40 ||
-      pr.y > canvas.height + 40
-    ) {
-      gameState.projectiles.splice(i, 1);
+      emitParticles(e.x, e.y, '#ff7c7c', 14);
+      state.enemies.splice(i, 1);
+      state.score += 10;
     }
   }
 }
 
 function updateParticles() {
-  for (let i = gameState.particles.length - 1; i >= 0; i -= 1) {
-    const pa = gameState.particles[i];
-    pa.x += pa.vx;
-    pa.y += pa.vy;
-    pa.life -= 1;
-    if (pa.life <= 0) {
-      gameState.particles.splice(i, 1);
-    }
+  for (let i = state.particles.length - 1; i >= 0; i -= 1) {
+    const p = state.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= 1;
+    if (p.life <= 0) state.particles.splice(i, 1);
   }
 }
 
-function drawArena() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
+function drawHumanoid(x, y, bodyColor, walkPhase, frozen = false, scale = 1) {
+  const swing = Math.sin(walkPhase) * 5 * scale;
+  ctx.lineWidth = 4 * scale;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = frozen ? '#c9f2ff' : bodyColor;
 
-  ctx.fillStyle = '#0f1527';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = cfg.background;
+  // torso
   ctx.beginPath();
-  ctx.arc(p.x, p.y, 240, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  for (let x = 0; x < canvas.width; x += 55) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
-    ctx.stroke();
-  }
-}
-
-function drawEntities() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
-
-  ctx.fillStyle = p.formAlt ? cfg.altColor : cfg.color;
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  // aim line + charge preview
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(gameState.mouse.x, gameState.mouse.y);
+  ctx.moveTo(x, y - 6 * scale);
+  ctx.lineTo(x, y + 14 * scale);
   ctx.stroke();
 
-  if (gameState.mouse.down) {
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.fillRect(p.x - 35, p.y + 28, (gameState.mouse.charge / 75) * 70, 6);
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.strokeRect(p.x - 35, p.y + 28, 70, 6);
+  // arms
+  ctx.beginPath();
+  ctx.moveTo(x - 8 * scale, y + swing * 0.4);
+  ctx.lineTo(x + 8 * scale, y - swing * 0.4);
+  ctx.stroke();
+
+  // legs
+  ctx.beginPath();
+  ctx.moveTo(x, y + 14 * scale);
+  ctx.lineTo(x - 7 * scale, y + 26 * scale + swing * 0.4);
+  ctx.moveTo(x, y + 14 * scale);
+  ctx.lineTo(x + 7 * scale, y + 26 * scale - swing * 0.4);
+  ctx.stroke();
+
+  // head
+  ctx.fillStyle = frozen ? '#e7faff' : bodyColor;
+  ctx.beginPath();
+  ctx.arc(x, y - 15 * scale, 7 * scale, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Background grid for visual style.
+  ctx.strokeStyle = 'rgba(150,190,230,0.09)';
+  for (let x = 0; x <= canvas.width; x += 50) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += 50) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
   }
 
-  for (const enemy of gameState.enemies) {
-    ctx.fillStyle = enemy.tint;
+  // Draw shield when right mouse is held.
+  if (mouse.rightDown && player.orb.amount > 0 && state.running) {
+    ctx.fillStyle = 'rgba(102, 201, 255, 0.22)';
     ctx.beginPath();
-    ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+    ctx.arc(player.x, player.y, 34, 0, Math.PI * 2);
     ctx.fill();
-
-    ctx.fillStyle = '#101825';
-    ctx.fillRect(enemy.x - 20, enemy.y - 26, 40, 5);
-    ctx.fillStyle = '#8af5a0';
-    const hpWidth = Math.max(0, (enemy.hp / 80) * 40);
-    ctx.fillRect(enemy.x - 20, enemy.y - 26, hpWidth, 5);
+    player.orb.amount = Math.max(0, player.orb.amount - 0.35);
   }
 
-  for (const pr of gameState.projectiles) {
-    ctx.fillStyle = pr.color;
+  // Player + orb animation.
+  const moving = keys.KeyW || keys.KeyA || keys.KeyS || keys.KeyD;
+  drawHumanoid(player.x, player.y, '#4fc3ff', moving ? state.time * 0.28 : 0, false, 1.1);
+
+  const orbPulse = 10 + Math.sin(state.time * 0.12) * 2;
+  const waterRatio = player.orb.amount / player.orb.max;
+  ctx.fillStyle = `rgba(100, 210, 255, ${0.45 + waterRatio * 0.4})`;
+  ctx.beginPath();
+  ctx.arc(player.orb.x, player.orb.y, orbPulse * (0.6 + waterRatio * 0.5), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#bdefff';
+  ctx.stroke();
+
+  // Enemies.
+  for (const e of state.enemies) {
+    drawHumanoid(e.x, e.y, e.hitTimer > 0 ? '#ffb8b8' : '#ff5c5c', state.time * 0.25 + e.stepOffset, e.frozen > 0);
+    if (e.frozen > 0) {
+      ctx.fillStyle = 'rgba(190,240,255,0.4)';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.r + 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Projectiles.
+  for (const p of state.projectiles) {
+    ctx.fillStyle = p.color;
     ctx.beginPath();
-    ctx.arc(pr.x, pr.y, pr.radius, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  for (const pa of gameState.particles) {
-    ctx.fillStyle = pa.color;
-    ctx.globalAlpha = Math.max(0, pa.life / 40);
+  // Particles.
+  for (const p of state.particles) {
+    ctx.globalAlpha = Math.max(0, p.life / 40);
+    ctx.fillStyle = p.color;
     ctx.beginPath();
-    ctx.arc(pa.x, pa.y, pa.size, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+
+  // Game over overlay.
+  if (!state.running) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 50px Arial';
+    ctx.fillText('You Were Defeated', canvas.width / 2, canvas.height / 2 - 20);
+    ctx.font = '24px Arial';
+    ctx.fillText('Press R to Restart', canvas.width / 2, canvas.height / 2 + 25);
   }
 }
 
 function updateHud() {
-  const p = gameState.player;
-  const cfg = ELEMENTS[p.element];
-  elementInfo.textContent = `Element: ${cfg.primary} ${p.formAlt ? `(${cfg.alternate} Form)` : ''}`;
-  healthInfo.textContent = `Health: ${Math.max(0, Math.round(p.hp))}/${p.maxHp}`;
-  scoreInfo.textContent = `Score: ${gameState.score}`;
+  const aliveText = state.running ? '' : '<span class="dead">(Defeated)</span>';
+  hud.innerHTML = `
+    Health: ${Math.round(player.hp)}/${player.maxHp} ${aliveText}<br>
+    Water Orb: ${Math.round(player.orb.amount)}/${player.orb.max}<br>
+    Score: ${state.score}<br>
+    Cooldowns → Wave: ${Math.ceil(player.waveCooldown / 60)}s | Ice: ${Math.ceil(player.iceCooldown / 60)}s
+  `;
 }
 
-function drawGameOver() {
-  if (gameState.player.hp > 0) return;
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 50px sans-serif';
-  ctx.fillText('Defeated', canvas.width / 2, canvas.height / 2 - 10);
-  ctx.font = '24px sans-serif';
-  ctx.fillText(`Final Score: ${gameState.score}`, canvas.width / 2, canvas.height / 2 + 35);
-}
+function update() {
+  state.time += 1;
 
-function gameLoop() {
-  if (!gameState.running) return;
-
-  gameState.gameTime += 1;
-  gameState.spawnTimer -= 1;
-
-  if (gameState.spawnTimer <= 0) {
-    spawnEnemy();
-    gameState.spawnTimer = Math.max(25, 95 - Math.floor(gameState.gameTime / 450));
-  }
-
-  if (gameState.player.hp > 0) {
+  if (state.running) {
     updatePlayer();
-    updateEnemies();
     updateProjectiles();
+    updateEnemies();
     updateParticles();
+
+    state.spawnTimer -= 1;
+    if (state.spawnTimer <= 0) {
+      spawnEnemy();
+      state.spawnTimer = Math.max(20, 80 - Math.floor(state.time / 480));
+    }
   }
 
-  drawArena();
-  drawEntities();
-  drawGameOver();
+  draw();
   updateHud();
-
-  requestAnimationFrame(gameLoop);
+  requestAnimationFrame(update);
 }
 
-canvas.addEventListener('mousemove', (event) => {
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+
+  // Space activates Ice Blast + Water Wave to satisfy requested abilities.
+  if (e.code === 'Space') {
+    e.preventDefault();
+    useIceBlast();
+    useWaterWave();
+  }
+
+  if (e.code === 'KeyR' && !state.running) resetGame();
+});
+
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+});
+
+canvas.addEventListener('mousemove', (e) => {
   const rect = canvas.getBoundingClientRect();
-  gameState.mouse.x = event.clientX - rect.left;
-  gameState.mouse.y = event.clientY - rect.top;
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
 });
 
-canvas.addEventListener('mousedown', (event) => {
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  if (event.button === 0) {
-    gameState.mouse.down = true;
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 0) {
+    mouse.leftDown = true;
+    shootWaterWhip();
   }
+  if (e.button === 2) mouse.rightDown = true;
 });
 
-canvas.addEventListener('mouseup', (event) => {
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  if (event.button === 0 && gameState.mouse.down) {
-    gameState.mouse.down = false;
-    shootProjectile(gameState.player, gameState.mouse.x, gameState.mouse.y);
-    gameState.mouse.charge = 0;
-  }
+canvas.addEventListener('mouseup', (e) => {
+  if (e.button === 0) mouse.leftDown = false;
+  if (e.button === 2) mouse.rightDown = false;
 });
 
-canvas.addEventListener('contextmenu', (event) => {
-  event.preventDefault();
-  if (!gameState.running || gameState.player.hp <= 0) return;
-  gameState.player.formAlt = !gameState.player.formAlt;
-  addParticles(gameState.player.x, gameState.player.y, '#ffffff', 9);
-});
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-for (const button of document.querySelectorAll('button[data-element]')) {
-  button.addEventListener('click', () => {
-    const element = button.dataset.element;
-    gameState.player = createPlayer(element);
-    gameState.running = true;
-    gameState.enemies = [];
-    gameState.projectiles = [];
-    gameState.particles = [];
-    gameState.score = 0;
-    gameState.gameTime = 0;
-    gameState.spawnTimer = 20;
-    selector.style.display = 'none';
-    gameLoop();
-  });
-}
+update();
