@@ -3,17 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Waterbender Arena</title>
+  <title>Element Bender Arena</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="game-wrap">
-    <h1>Waterbender Arena</h1>
-    <p class="help">WASD move · Mouse aim · Left Click Water Whip · Right Click Water Wave Shield · Space Ice Shard</p>
-    <canvas id="gameCanvas" width="1000" height="620"></canvas>
-    <p id="status"></p>
+  <div id="classSelector" class="overlay">
+    <div class="panel">
+      <h1>Choose Your Bending Class</h1>
+      <p>Left click and drag to charge + throw. Right click to shift form.</p>
+      <div class="choices">
+        <button data-element="water">Water</button>
+        <button data-element="fire">Fire</button>
+        <button data-element="earth">Earth</button>
+        <button data-element="air">Air</button>
+      </div>
+    </div>
   </div>
 
+  <div class="hud">
+    <div id="elementInfo"></div>
+    <div id="healthInfo"></div>
+    <div id="scoreInfo"></div>
+  </div>
+
+  <canvas id="game" width="1100" height="650"></canvas>
   <script src="game.js"></script>
 </body>
 </html>
